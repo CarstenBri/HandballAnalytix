@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spielbericht-Uploader</title>
+    <!-- Dies ist der CSS-Teil für das Styling der Seite -->
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background-color: #f0f2f5; 
+            margin: 0;
+        }
+        #container { 
+            background: white; 
+            padding: 30px 40px; 
+            border-radius: 12px; 
+            box-shadow: 0 6px 20px rgba(0,0,0,0.08); 
+            text-align: center; 
+            width: 90%;
+            max-width: 500px;
+        }
+        h1 { 
+            color: #1c1e21;
+            font-size: 24px;
+            margin-bottom: 25px;
+        }
+        /* Styling für das Datei-Auswahlfeld */
+        input[type="file"] {
+            display: none; /* Wir verstecken den Standard-Button */
+        }
+        .file-upload-label {
+            border: 2px dashed #ccd0d5;
+            border-radius: 8px;
+            padding: 30px;
+            cursor: pointer;
+            display: block;
+            margin: 20px 0;
+            color: #606770;
+        }
+        .file-upload-label:hover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        /* Styling für den Haupt-Button */
+        button { 
+            background-color: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 12px 25px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            transition: background-color 0.2s;
+        }
+        button:hover { 
+            background-color: #0056b3; 
+        }
+        button:disabled {
+            background-color: #a0c9ff;
+            cursor: not-allowed;
+        }
+        /* Das Status-Feld für Nachrichten an den Nutzer */
+        #status { 
+            margin-top: 20px; 
+            font-weight: bold; 
+            min-height: 22px; /* Verhindert, dass das Layout springt */
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Handball-Spielbericht hochladen</h1>
+        
+        <!-- Ein schöneres Label für den Datei-Upload -->
+        <label for="pdfFile" class="file-upload-label" id="fileLabel">
+            Klicke hier, um eine PDF-Datei auszuwählen
+        </label>
+        <input type="file" id="pdfFile" accept=".pdf" onchange="updateFileName()">
+        
+        <button id="uploadButton" onclick="uploadFile()">Verarbeiten & Speichern</button>
+        
+        <div id="status"></div>
+    </div>
+
+    <!-- Dies ist der JavaScript-Teil für die Funktionalität -->
+    <script>
+        // WICHTIG: Ersetze diese URL durch die URL deines Render-Dienstes,
+        // sobald dieser online ist!
+        const backendUrl = 'DEINE_BACKEND_URL_HIER_EINFUEGEN/upload';
+
+        const fileInput = document.getElementById('pdfFile');
+        const fileLabel = document.getElementById('fileLabel');
+        const statusDiv = document.getElementById('status');
+        const uploadButton = document.getElementById('uploadButton');
+
+        function updateFileName() {
+            if (fileInput.files.length > 0) {
+                fileLabel.textContent = `Ausgewählt: ${fileInput.files[0].name}`;
+            } else {
+                fileLabel.textContent = 'Klicke hier, um eine PDF-Datei auszuwählen';
+            }
+        }
+
+        async function uploadFile() {
+            if (fileInput.files.length === 0) {
+                statusDiv.textContent = 'Bitte wähle zuerst eine PDF-Datei aus.';
+                statusDiv.style.color = 'red';
+                return;
+            }
+
+            // URL-Platzhalter prüfen
+            if (backendUrl.includes('DEINE_BACKEND_URL_HIER_EINFUEGEN')) {
+                statusDiv.textContent = 'Fehler: Die Backend-URL wurde noch nicht im Code gesetzt.';
+                statusDiv.style.color = 'red';
+                alert('Bitte ersetze den Platzhalter "DEINE_BACKEND_URL_HIER_EINFUEGEN" im HTML-Code durch die echte URL deines Render-Dienstes.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            statusDiv.textContent = 'Lade hoch und verarbeite...';
+            statusDiv.style.color = 'orange';
+            uploadButton.disabled = true; // Button während des Uploads deaktivieren
+
+            try {
+                const response = await fetch(backendUrl, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    statusDiv.textContent = `Erfolg! ${result.message}`;
+                    statusDiv.style.color = 'green';
+                } else {
+                    statusDiv.textContent = `Fehler: ${result.error || 'Unbekannter Fehler'}`;
+                    statusDiv.style.color = 'red';
+                }
+            } catch (error) {
+                console.error('Netzwerk- oder Skriptfehler:', error);
+                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten. Siehe Konsole.';
+                statusDiv.style.color = 'red';
+            } finally {
+                uploadButton.disabled = false; // Button nach Abschluss wieder aktivieren
+            }
+        }
+    </script>
+</body>
+</html>
