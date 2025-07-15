@@ -91,9 +91,8 @@
 
     <!-- Dies ist der JavaScript-Teil für die Funktionalität -->
     <script>
-        // WICHTIG: Ersetze diese URL durch die URL deines Render-Dienstes,
-        // sobald dieser online ist!
-        const backendUrl = 'DEINE_BACKEND_URL_HIER_EINFUEGEN/upload';
+        // Die URL wurde mit deinem Render-Dienst aktualisiert.
+        const backendUrl = 'https://handballanalytix.onrender.com/upload';
 
         const fileInput = document.getElementById('pdfFile');
         const fileLabel = document.getElementById('fileLabel');
@@ -112,14 +111,6 @@
             if (fileInput.files.length === 0) {
                 statusDiv.textContent = 'Bitte wähle zuerst eine PDF-Datei aus.';
                 statusDiv.style.color = 'red';
-                return;
-            }
-
-            // URL-Platzhalter prüfen
-            if (backendUrl.includes('DEINE_BACKEND_URL_HIER_EINFUEGEN')) {
-                statusDiv.textContent = 'Fehler: Die Backend-URL wurde noch nicht im Code gesetzt.';
-                statusDiv.style.color = 'red';
-                alert('Bitte ersetze den Platzhalter "DEINE_BACKEND_URL_HIER_EINFUEGEN" im HTML-Code durch die echte URL deines Render-Dienstes.');
                 return;
             }
 
