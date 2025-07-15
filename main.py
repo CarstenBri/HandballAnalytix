@@ -4,16 +4,15 @@ import re
 import io
 import os
 import json
-import psycopg2 # Neue Bibliothek für die PostgreSQL-Datenbank
+import psycopg2
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pypdf import PdfReader
 
-# Erstelle eine Flask-Webanwendung
 app = Flask(__name__)
 CORS(app)
 
-# Die parse_spielbericht Funktion bleibt genau gleich
+# Die parse_spielbericht Funktion bleibt unverändert
 def parse_spielbericht(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     full_text = ""
@@ -61,16 +60,9 @@ def parse_spielbericht(pdf_bytes):
             })
     return data
 
-def init_db():
-    """Erstellt die Datenbank-Tabelle, falls sie noch nicht existiert."""
-    db_url = os.environ.get('DATABASE_URL')
-    if not db_url:
-        print("DATABASE_URL ist nicht gesetzt. Kann DB nicht initialisieren.")
-        return
-    
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    # Wir verwenden JSONB für flexible JSON-Daten
+def ensure_db_table_exists(cur):
+    """Stellt sicher, dass die Zieltabelle in der DB existiert."""
+    print("LOG: Überprüfe, ob Tabelle 'spielberichte' existiert...")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS spielberichte (
             id SERIAL PRIMARY KEY,
@@ -83,9 +75,7 @@ def init_db():
             erstellt_am TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    conn.commit()
-    cur.close()
-    conn.close()
+    print("LOG: Tabellen-Check abgeschlossen.")
 
 @app.route('/upload', methods=['POST'])
 def upload_spielbericht():
@@ -93,23 +83,35 @@ def upload_spielbericht():
         return jsonify({"error": "Keine Datei gefunden"}), 400
 
     pdf_file = request.files['file']
+    
+    # Schritt 1: PDF-Daten extrahieren
     try:
+        print("LOG: Starte PDF-Verarbeitung...")
         pdf_bytes = pdf_file.read()
         parsed_data = parse_spielbericht(pdf_bytes)
+        print(f"LOG: Daten für Spiel-ID {parsed_data.get('spielId')} erfolgreich extrahiert.")
 
         if not parsed_data.get("spielId"):
             return jsonify({"error": "Konnte keine Spiel-ID extrahieren."}), 400
+    except Exception as e:
+        print(f"FEHLER bei PDF-Verarbeitung: {e}")
+        return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
-        # --- NEU: Daten in die Datenbank speichern ---
+    # Schritt 2: Daten in die Datenbank speichern
+    conn = None
+    try:
         db_url = os.environ.get('DATABASE_URL')
         if not db_url:
+            print("FEHLER: DATABASE_URL ist auf dem Server nicht gesetzt.")
             return jsonify({"error": "Datenbank-Konfiguration auf dem Server fehlt."}), 500
             
+        print("LOG: Verbinde mit der Datenbank...")
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
 
-        # SQL-Befehl zum Einfügen oder Aktualisieren von Daten
-        # ON CONFLICT sorgt dafür, dass ein bereits vorhandener Spielbericht aktualisiert wird
+        # Sicherstellen, dass die Tabelle existiert (robuster Ansatz)
+        ensure_db_table_exists(cur)
+        
         insert_query = """
             INSERT INTO spielberichte (spiel_id, datum, teams, ergebnis, spieler, spielverlauf)
             VALUES (%s, TO_DATE(%s, 'DD.MM.YY'), %s, %s, %s, %s)
@@ -121,8 +123,6 @@ def upload_spielbericht():
                 spielverlauf = EXCLUDED.spielverlauf;
         """
         
-        # Daten für die Abfrage vorbereiten
-        # Wir konvertieren die Python-Dicts mit json.dumps in JSON-Strings
         data_tuple = (
             parsed_data['spielId'],
             parsed_data['datum'],
@@ -132,24 +132,27 @@ def upload_spielbericht():
             json.dumps(parsed_data['spielverlauf'])
         )
         
+        print(f"LOG: Führe INSERT für Spiel-ID {parsed_data['spielId']} aus...")
         cur.execute(insert_query, data_tuple)
         
-        conn.commit() # Änderungen speichern
-        cur.close()
-        conn.close()
-        # --- Ende des neuen Datenbank-Teils ---
-
+        conn.commit()
+        print("LOG: Datenbank-Commit erfolgreich!")
+        
         return jsonify({
             "success": True, 
             "message": f"Spielbericht {parsed_data['spielId']} erfolgreich in DB gespeichert.",
-            "data": parsed_data
         }), 200
+        
     except Exception as e:
-        # Gibt eine detailliertere Fehlermeldung für die Fehlersuche zurück
-        return jsonify({"error": f"Verarbeitung fehlgeschlagen: {str(e)}"}), 500
-
-# Initialisiere die Datenbank beim Start der Anwendung
-init_db()
+        print(f"FEHLER bei Datenbank-Operation: {e}")
+        return jsonify({"error": f"Datenbank-Fehler: {str(e)}"}), 500
+    finally:
+        # Sicherstellen, dass die Verbindung immer geschlossen wird
+        if conn:
+            cur.close()
+            conn.close()
+            print("LOG: Datenbank-Verbindung geschlossen.")
 
 if __name__ == '__main__':
+    # Wir brauchen den init_db() Aufruf hier nicht mehr
     app.run(port=5001)
