@@ -3,3 +3,4 @@ Flask
 Flask-Cors
 pypdf
 gunicorn
+psycopg2-binary
