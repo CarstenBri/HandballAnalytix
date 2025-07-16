@@ -40,7 +40,7 @@
         button:disabled { background-color: #a0c9ff; cursor: not-allowed; }
         #status { margin-top: 20px; font-weight: bold; min-height: 22px; }
 
-        /* NEUE STILE FÜR DAS VERIFIZIERUNGSFORMULAR */
+        /* Stile für das Verifizierungsformular */
         #verification-container {
             margin-top: 25px;
             padding-top: 20px;
@@ -48,7 +48,8 @@
             text-align: left;
             display: none; /* Am Anfang versteckt */
         }
-        #verification-container h2 { text-align: center; }
+        #verification-container h2 { text-align: center; margin-bottom: 10px; }
+        #verification-container p { text-align: center; margin-top: 0; color: #606770; font-size: 14px; }
         .form-group { margin-bottom: 15px; }
         .form-group label {
             display: block; font-weight: bold;
@@ -56,7 +57,7 @@
         }
         .form-group input {
             width: 100%; padding: 8px; border: 1px solid #ccc;
-            border-radius: 5px; box-sizing: border-box; /* Wichtig für korrekte Breite */
+            border-radius: 5px; box-sizing: border-box;
         }
         #saveButton { background-color: #28a745; /* Grün */ }
         #saveButton:hover { background-color: #218838; }
@@ -75,7 +76,7 @@
         
         <div id="status"></div>
 
-        <!-- NEU: Container für die Verifizierung -->
+        <!-- Container für die Verifizierung -->
         <div id="verification-container">
             <h2>Daten überprüfen und bestätigen</h2>
             <p>Bitte überprüfe die extrahierten Daten. Du kannst sie hier korrigieren, bevor du sie speicherst.</p>
@@ -137,12 +138,12 @@
                     statusDiv.textContent = 'Analyse erfolgreich. Bitte Daten überprüfen.';
                     statusDiv.style.color = 'blue';
                 } else {
-                    statusDiv.textContent = `Fehler bei der Analyse: ${result.error}`;
+                    statusDiv.textContent = `Fehler bei der Analyse: ${result.error || 'Unbekannter Fehler'}`;
                     statusDiv.style.color = 'red';
                     verificationContainer.style.display = 'none';
                 }
             } catch (error) {
-                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten.';
+                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten. Siehe Konsole.';
                 statusDiv.style.color = 'red';
             } finally {
                 uploadButton.disabled = false;
@@ -193,11 +194,11 @@
                     statusDiv.style.color = 'green';
                     verificationContainer.style.display = 'none'; // Form nach Erfolg ausblenden
                 } else {
-                    statusDiv.textContent = `Fehler beim Speichern: ${result.error}`;
+                    statusDiv.textContent = `Fehler beim Speichern: ${result.error || 'Unbekannter Fehler'}`;
                     statusDiv.style.color = 'red';
                 }
             } catch (error) {
-                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten.';
+                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten. Siehe Konsole.';
                 statusDiv.style.color = 'red';
             } finally {
                 document.getElementById('saveButton').disabled = false;
