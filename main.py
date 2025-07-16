@@ -14,19 +14,18 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# === NEU VERBESSERTE DATEN-INTERPRETATION ===
+# === NEUE VERSION: Zeilenweise Verarbeitung nach deiner Logik ===
 # ==============================================================================
 def parse_spielbericht(pdf_bytes):
+    """
+    Analysiert den Inhalt einer PDF-Datei durch zeilenweise Verarbeitung.
+    Dieser Ansatz ist robuster und folgt der Struktur der PDF.
+    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     full_text = ""
-    # Wir nehmen nur die ersten beiden Seiten, um die Analyse zu beschleunigen
     num_pages_to_read = min(2, len(reader.pages))
     for i in range(num_pages_to_read):
         full_text += reader.pages[i].extract_text() + "\n"
-
-    # Wir ersetzen mehrere Leerzeichen/Zeilenumbrüche durch ein einzelnes Leerzeichen
-    # Diesmal aber vorsichtiger, um keine Wörter zusammenzukleben.
-    clean_text = re.sub(r'\s+', ' ', full_text)
 
     data = {
         "spielId": None,
@@ -37,43 +36,73 @@ def parse_spielbericht(pdf_bytes):
         "spielverlauf": []
     }
 
-    # --- NOCH ROBUSTERE REGEX-MUSTER ---
-    # \s* erlaubt beliebig viele (auch keine) Leerzeichen zwischen den Wörtern
-    match = re.search(r"Spiel\s*Nr\s*\.\s*(\d+)", clean_text)
-    if match:
-        data["spielId"] = match.group(1)
-    
-    match = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_text)
-    if match:
-        data["datum"] = match.group(1)
+    # Wir teilen den gesamten Text in einzelne Zeilen auf
+    lines = full_text.splitlines()
 
-    match = re.search(r"Heim\s*Gast\s*,\s*\"(.*?)\s*-\s*(.*?)\"", full_text.replace('\n', ''))
-    if match:
-        data["teams"]["heim"] = match.group(1).strip()
-        data["teams"]["gast"] = match.group(2).strip()
+    # Wir gehen jede Zeile einzeln durch
+    for line in lines:
+        # Wir bereinigen die Zeile von führenden/folgenden Leerzeichen
+        clean_line = line.strip()
 
-    match = re.search(r"Endstand\s*,\s*\"(\d+:\d+)\s*\((\d+:\d+)\)\s*,\s*Sieger\s*(.*?)\"", full_text.replace('\n', ''))
-    if match:
-        data["ergebnis"]["endstand"] = match.group(1).strip()
-        data["ergebnis"]["halbzeit"] = match.group(2).strip()
-        data["ergebnis"]["sieger"] = match.group(3).strip()
-    
-    # Der Rest bleibt wie gehabt...
+        # --- Suche nach Schlüsselwörtern ---
+        
+        # Suche nach der Zeile, die Spiel-ID und Datum enthält
+        if clean_line.startswith('"Spiel/Datum'):
+            try:
+                # Die Zeile sieht so aus: "...,"WERT",...". Wir extrahieren den Wert.
+                value = clean_line.split('","')[1].strip('", ')
+                # Jetzt extrahieren wir die einzelnen Teile aus dem Wert
+                match_id = re.search(r'(\d+)', value)
+                if match_id:
+                    data["spielId"] = match_id.group(1)
+                
+                match_date = re.search(r'am (\d{2}\.\d{2}\.\d{2})', value)
+                if match_date:
+                    data["datum"] = match_date.group(1)
+            except IndexError:
+                print("LOG: Konnte Wert für Spiel/Datum nicht extrahieren.")
+
+        # Suche nach der Zeile mit den Teamnamen
+        elif clean_line.startswith('"Heim Gast'):
+            try:
+                value = clean_line.split('","')[1].strip('", ')
+                # Wir teilen den Wert am " - " Trennzeichen
+                teams = value.split(' - ')
+                if len(teams) == 2:
+                    data["teams"]["heim"] = teams[0].strip()
+                    data["teams"]["gast"] = teams[1].strip()
+            except IndexError:
+                print("LOG: Konnte Wert für Heim/Gast nicht extrahieren.")
+
+        # Suche nach der Zeile mit dem Endergebnis
+        elif clean_line.startswith('"Endstand'):
+            try:
+                value = clean_line.split('","')[1].strip('", ')
+                # Regex, um Endstand, Halbzeit und Sieger zu finden
+                match = re.search(r'(\d+:\d+)\s*\((\d+:\d+)\)\s*,\s*Sieger\s*(.*)', value)
+                if match:
+                    data["ergebnis"]["endstand"] = match.group(1).strip()
+                    data["ergebnis"]["halbzeit"] = match.group(2).strip()
+                    # Wir entfernen noch das Wort "Zuschauer", falls es am Ende steht
+                    data["ergebnis"]["sieger"] = match.group(3).replace('Zuschauer:', '').strip()
+            except IndexError:
+                print("LOG: Konnte Wert für Endstand nicht extrahieren.")
+
+    # --- SPIELVERLAUF-PARSING (bleibt gleich) ---
     verlauf_start = full_text.find("Spielverlauf\n")
     if verlauf_start != -1:
         verlauf_text = full_text[verlauf_start:]
         ereignisse = re.findall(r"(\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2})\s+([\d:]*)\s+(.*)", verlauf_text)
         for ereignis in ereignisse:
             data["spielverlauf"].append({
-                "uhrzeit": ereignis[0],
-                "spielzeit": ereignis[1],
-                "spielstand": ereignis[2] if ereignis[2] else None,
-                "aktion": ereignis[3].strip()
+                "uhrzeit": ereignis[0], "spielzeit": ereignis[1],
+                "spielstand": ereignis[2] if ereignis[2] else None, "aktion": ereignis[3].strip()
             })
             
-    return data, full_text, clean_text # Wir geben jetzt auch die Texte für das Debugging zurück
+    # Wir geben das Ergebnis für die normale Funktion und die Texte für die Debug-Seite zurück
+    return data, full_text, "\n".join(lines)
 # ==============================================================================
-# === AB HIER BLEIBT DER CODE UNVERÄNDERT (bis auf die neue Debug-Route) ===
+# === AB HIER BLEIBT DER CODE UNVERÄNDERT ===
 # ==============================================================================
 
 def ensure_db_table_exists(cur):
@@ -122,7 +151,6 @@ def upload_spielbericht():
 
 @app.route('/view-data')
 def view_data():
-    # Diese Funktion bleibt unverändert
     conn = None
     try:
         db_url = os.environ.get('DATABASE_URL')
@@ -131,27 +159,40 @@ def view_data():
         ensure_db_table_exists(cur)
         cur.execute("SELECT spiel_id, datum, ergebnis, teams FROM spielberichte ORDER BY erstellt_am DESC;")
         berichte = cur.fetchall()
-        html = "..." # HTML-Generierung wie zuvor
+        html = """
+        <style>
+            body { font-family: sans-serif; margin: 2em; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        </style>
+        <h1>Gespeicherte Spielberichte</h1>
+        """
+        if not berichte:
+            html += "<p>Noch keine Daten in der Datenbank gefunden.</p>"
+            return html, 200
+        html += "<table><tr><th>Spiel ID</th><th>Datum</th><th>Ergebnis</th><th>Heim</th><th>Gast</th></tr>"
+        for bericht in berichte:
+            spiel_id, datum_val, ergebnis_json, teams_json = bericht
+            datum_str = datum_val.strftime('%d.%m.%Y') if isinstance(datum_val, date) else 'N/A'
+            ergebnis_str = ergebnis_json.get('endstand', 'N/A') if ergebnis_json else 'N/A'
+            heim_str = teams_json.get('heim', 'N/A') if teams_json else 'N/A'
+            gast_str = teams_json.get('gast', 'N/A') if teams_json else 'N/A'
+            html += f"<tr><td>{spiel_id}</td><td>{datum_str}</td><td>{ergebnis_str}</td><td>{heim_str}</td><td>{gast_str}</td></tr>"
+        html += "</table>"
         return html, 200
     except Exception as e: return f"<h1>Fehler</h1><p>{e}</p>", 500
     finally:
         if conn: cur.close(); conn.close()
 
-# ==============================================================================
-# === NEUE DEBUG-SEITE ===
-# ==============================================================================
 @app.route('/debug', methods=['GET', 'POST'])
 def debug_pdf():
     if request.method == 'POST':
-        if 'file' not in request.files:
-            return "<h1>Fehler</h1><p>Keine Datei hochgeladen.</p>", 400
+        if 'file' not in request.files: return "<h1>Fehler</h1><p>Keine Datei hochgeladen.</p>", 400
         file = request.files['file']
         try:
             pdf_bytes = file.read()
-            # Wir rufen unsere Analyse-Funktion auf und bekommen alles zurück
             parsed_data, raw_text, clean_text = parse_spielbericht(pdf_bytes)
-            
-            # Wir bauen eine HTML-Antwort, die uns alles anzeigt
             html_response = f"""
             <style>
                 body {{ font-family: sans-serif; margin: 2em; }}
@@ -159,21 +200,13 @@ def debug_pdf():
                 pre {{ background-color: #f4f4f4; padding: 1em; white-space: pre-wrap; word-wrap: break-word; border: 1px solid #ddd; }}
             </style>
             <h1>PDF Debug-Ansicht</h1>
-            
             <h2>1. Extrahierte Daten (JSON)</h2>
             <pre>{json.dumps(parsed_data, indent=2, ensure_ascii=False)}</pre>
-            
-            <h2>2. Bereinigter Text (wird für die Analyse verwendet)</h2>
-            <pre>{clean_text}</pre>
-            
-            <h2>3. Roher Text (direkt aus der PDF)</h2>
+            <h2>2. Roher Text (direkt aus der PDF)</h2>
             <pre>{raw_text}</pre>
             """
             return html_response
-        except Exception as e:
-            return f"<h1>Ein Fehler ist aufgetreten</h1><p>{e}</p>"
-
-    # Wenn die Seite normal aufgerufen wird (GET), zeigen wir das Upload-Formular an
+        except Exception as e: return f"<h1>Ein Fehler ist aufgetreten</h1><p>{e}</p>"
     return '''
         <!doctype html>
         <title>PDF Debug Uploader</title>
@@ -186,4 +219,3 @@ def debug_pdf():
 
 if __name__ == '__main__':
     app.run(port=5001)
-
