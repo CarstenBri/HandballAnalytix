@@ -4,16 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spielbericht-Uploader</title>
-    <!-- Dies ist der CSS-Teil für das Styling der Seite -->
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             display: flex; 
             justify-content: center; 
             align-items: center; 
-            height: 100vh; 
+            min-height: 100vh; 
             background-color: #f0f2f5; 
-            margin: 0;
+            margin: 0; padding: 20px 0;
         }
         #container { 
             background: white; 
@@ -22,92 +21,98 @@
             box-shadow: 0 6px 20px rgba(0,0,0,0.08); 
             text-align: center; 
             width: 90%;
-            max-width: 500px;
+            max-width: 600px;
         }
-        h1 { 
-            color: #1c1e21;
-            font-size: 24px;
-            margin-bottom: 25px;
-        }
-        /* Styling für das Datei-Auswahlfeld */
-        input[type="file"] {
-            display: none; /* Wir verstecken den Standard-Button */
-        }
+        h1 { color: #1c1e21; font-size: 24px; margin-bottom: 25px; }
+        input[type="file"] { display: none; }
         .file-upload-label {
-            border: 2px dashed #ccd0d5;
-            border-radius: 8px;
-            padding: 30px;
-            cursor: pointer;
-            display: block;
-            margin: 20px 0;
-            color: #606770;
+            border: 2px dashed #ccd0d5; border-radius: 8px; padding: 30px;
+            cursor: pointer; display: block; margin: 20px 0; color: #606770;
         }
-        .file-upload-label:hover {
-            border-color: #007bff;
-            background-color: #f8f9fa;
-        }
-        /* Styling für den Haupt-Button */
+        .file-upload-label:hover { border-color: #007bff; background-color: #f8f9fa; }
         button { 
-            background-color: #007bff; 
-            color: white; 
-            border: none; 
-            padding: 12px 25px; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-size: 16px;
-            font-weight: bold;
-            width: 100%;
-            transition: background-color 0.2s;
+            color: white; border: none; padding: 12px 25px; border-radius: 8px; 
+            cursor: pointer; font-size: 16px; font-weight: bold;
+            width: 100%; transition: background-color 0.2s;
         }
-        button:hover { 
-            background-color: #0056b3; 
+        #uploadButton { background-color: #007bff; }
+        #uploadButton:hover { background-color: #0056b3; }
+        button:disabled { background-color: #a0c9ff; cursor: not-allowed; }
+        #status { margin-top: 20px; font-weight: bold; min-height: 22px; }
+
+        /* NEUE STILE FÜR DAS VERIFIZIERUNGSFORMULAR */
+        #verification-container {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            text-align: left;
+            display: none; /* Am Anfang versteckt */
         }
-        button:disabled {
-            background-color: #a0c9ff;
-            cursor: not-allowed;
+        #verification-container h2 { text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label {
+            display: block; font-weight: bold;
+            margin-bottom: 5px; color: #333;
         }
-        /* Das Status-Feld für Nachrichten an den Nutzer */
-        #status { 
-            margin-top: 20px; 
-            font-weight: bold; 
-            min-height: 22px; /* Verhindert, dass das Layout springt */
+        .form-group input {
+            width: 100%; padding: 8px; border: 1px solid #ccc;
+            border-radius: 5px; box-sizing: border-box; /* Wichtig für korrekte Breite */
         }
+        #saveButton { background-color: #28a745; /* Grün */ }
+        #saveButton:hover { background-color: #218838; }
     </style>
 </head>
 <body>
     <div id="container">
-        <h1>Handball-Spielbericht hochladen</h1>
+        <h1>Handball-Spielbericht Uploader</h1>
         
-        <!-- Ein schöneres Label für den Datei-Upload -->
         <label for="pdfFile" class="file-upload-label" id="fileLabel">
             Klicke hier, um eine PDF-Datei auszuwählen
         </label>
         <input type="file" id="pdfFile" accept=".pdf" onchange="updateFileName()">
         
-        <button id="uploadButton" onclick="uploadFile()">Verarbeiten & Speichern</button>
+        <button id="uploadButton" onclick="uploadAndAnalyzeFile()">1. Analysieren</button>
         
         <div id="status"></div>
+
+        <!-- NEU: Container für die Verifizierung -->
+        <div id="verification-container">
+            <h2>Daten überprüfen und bestätigen</h2>
+            <p>Bitte überprüfe die extrahierten Daten. Du kannst sie hier korrigieren, bevor du sie speicherst.</p>
+            
+            <div class="form-group"><label for="ver-spielId">Spiel ID</label><input type="text" id="ver-spielId"></div>
+            <div class="form-group"><label for="ver-datum">Datum</label><input type="text" id="ver-datum"></div>
+            <div class="form-group"><label for="ver-heim">Heimmannschaft</label><input type="text" id="ver-heim"></div>
+            <div class="form-group"><label for="ver-gast">Gastmannschaft</label><input type="text" id="ver-gast"></div>
+            <div class="form-group"><label for="ver-endstand">Endstand</label><input type="text" id="ver-endstand"></div>
+            <div class="form-group"><label for="ver-halbzeit">Halbzeitstand</label><input type="text" id="ver-halbzeit"></div>
+            
+            <button id="saveButton" onclick="saveVerifiedData()">2. Bestätigen & Speichern</button>
+        </div>
     </div>
 
-    <!-- Dies ist der JavaScript-Teil für die Funktionalität -->
     <script>
-        // Die URL wurde mit deinem Render-Dienst aktualisiert.
-        const backendUrl = 'https://handballanalytix.onrender.com/upload';
+        const uploadUrl = 'https://handballanalytix.onrender.com/upload';
+        const saveUrl = 'https://handballanalytix.onrender.com/save-data';
 
         const fileInput = document.getElementById('pdfFile');
         const fileLabel = document.getElementById('fileLabel');
         const statusDiv = document.getElementById('status');
         const uploadButton = document.getElementById('uploadButton');
+        const verificationContainer = document.getElementById('verification-container');
+        
+        let verifiedDataCache = {}; // Cache für die Daten zwischen den Schritten
 
         function updateFileName() {
             if (fileInput.files.length > 0) {
                 fileLabel.textContent = `Ausgewählt: ${fileInput.files[0].name}`;
+                verificationContainer.style.display = 'none'; // Form bei neuer Datei ausblenden
             } else {
                 fileLabel.textContent = 'Klicke hier, um eine PDF-Datei auszuwählen';
             }
         }
 
-        async function uploadFile() {
+        async function uploadAndAnalyzeFile() {
             if (fileInput.files.length === 0) {
                 statusDiv.textContent = 'Bitte wähle zuerst eine PDF-Datei aus.';
                 statusDiv.style.color = 'red';
@@ -118,31 +123,84 @@
             const formData = new FormData();
             formData.append('file', file);
 
-            statusDiv.textContent = 'Lade hoch und verarbeite...';
+            statusDiv.textContent = 'Analysiere PDF...';
             statusDiv.style.color = 'orange';
-            uploadButton.disabled = true; // Button während des Uploads deaktivieren
+            uploadButton.disabled = true;
 
             try {
-                const response = await fetch(backendUrl, {
-                    method: 'POST',
-                    body: formData,
-                });
-
+                const response = await fetch(uploadUrl, { method: 'POST', body: formData });
                 const result = await response.json();
 
-                if (response.ok) {
-                    statusDiv.textContent = `Erfolg! ${result.message}`;
-                    statusDiv.style.color = 'green';
+                if (response.ok && result.success) {
+                    verifiedDataCache = result.data; // Daten im Cache speichern
+                    displayVerificationForm(verifiedDataCache);
+                    statusDiv.textContent = 'Analyse erfolgreich. Bitte Daten überprüfen.';
+                    statusDiv.style.color = 'blue';
                 } else {
-                    statusDiv.textContent = `Fehler: ${result.error || 'Unbekannter Fehler'}`;
+                    statusDiv.textContent = `Fehler bei der Analyse: ${result.error}`;
+                    statusDiv.style.color = 'red';
+                    verificationContainer.style.display = 'none';
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten.';
+                statusDiv.style.color = 'red';
+            } finally {
+                uploadButton.disabled = false;
+            }
+        }
+
+        function displayVerificationForm(data) {
+            document.getElementById('ver-spielId').value = data.spielId || '';
+            document.getElementById('ver-datum').value = data.datum || '';
+            document.getElementById('ver-heim').value = data.teams.heim || '';
+            document.getElementById('ver-gast').value = data.teams.gast || '';
+            document.getElementById('ver-endstand').value = data.ergebnis.endstand || '';
+            document.getElementById('ver-halbzeit').value = data.ergebnis.halbzeit || '';
+            verificationContainer.style.display = 'block';
+        }
+
+        async function saveVerifiedData() {
+            // Daten aus dem Formular sammeln und mit dem Cache zusammenführen
+            const dataToSave = {
+                ...verifiedDataCache, // Behält z.B. den Spielverlauf
+                spielId: document.getElementById('ver-spielId').value,
+                datum: document.getElementById('ver-datum').value,
+                teams: {
+                    heim: document.getElementById('ver-heim').value,
+                    gast: document.getElementById('ver-gast').value,
+                },
+                ergebnis: {
+                    ...verifiedDataCache.ergebnis, // Behält z.B. den Sieger
+                    endstand: document.getElementById('ver-endstand').value,
+                    halbzeit: document.getElementById('ver-halbzeit').value,
+                }
+            };
+
+            statusDiv.textContent = 'Speichere Daten...';
+            statusDiv.style.color = 'orange';
+            document.getElementById('saveButton').disabled = true;
+
+            try {
+                const response = await fetch(saveUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dataToSave)
+                });
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    statusDiv.textContent = result.message;
+                    statusDiv.style.color = 'green';
+                    verificationContainer.style.display = 'none'; // Form nach Erfolg ausblenden
+                } else {
+                    statusDiv.textContent = `Fehler beim Speichern: ${result.error}`;
                     statusDiv.style.color = 'red';
                 }
             } catch (error) {
-                console.error('Netzwerk- oder Skriptfehler:', error);
-                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten. Siehe Konsole.';
+                statusDiv.textContent = 'Ein schwerwiegender Fehler ist aufgetreten.';
                 statusDiv.style.color = 'red';
             } finally {
-                uploadButton.disabled = false; // Button nach Abschluss wieder aktivieren
+                document.getElementById('saveButton').disabled = false;
             }
         }
     </script>
