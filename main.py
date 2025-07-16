@@ -5,6 +5,7 @@ import io
 import os
 import json
 import psycopg2
+from datetime import date
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pypdf import PdfReader
@@ -62,7 +63,6 @@ def parse_spielbericht(pdf_bytes):
 
 def ensure_db_table_exists(cur):
     """Stellt sicher, dass die Zieltabelle in der DB existiert."""
-    print("LOG: Überprüfe, ob Tabelle 'spielberichte' existiert...")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS spielberichte (
             id SERIAL PRIMARY KEY,
@@ -75,7 +75,6 @@ def ensure_db_table_exists(cur):
             erstellt_am TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    print("LOG: Tabellen-Check abgeschlossen.")
 
 @app.route('/upload', methods=['POST'])
 def upload_spielbericht():
@@ -84,32 +83,22 @@ def upload_spielbericht():
 
     pdf_file = request.files['file']
     
-    # Schritt 1: PDF-Daten extrahieren
     try:
-        print("LOG: Starte PDF-Verarbeitung...")
         pdf_bytes = pdf_file.read()
         parsed_data = parse_spielbericht(pdf_bytes)
-        print(f"LOG: Daten für Spiel-ID {parsed_data.get('spielId')} erfolgreich extrahiert.")
-
         if not parsed_data.get("spielId"):
             return jsonify({"error": "Konnte keine Spiel-ID extrahieren."}), 400
     except Exception as e:
-        print(f"FEHLER bei PDF-Verarbeitung: {e}")
         return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
-    # Schritt 2: Daten in die Datenbank speichern
     conn = None
     try:
         db_url = os.environ.get('DATABASE_URL')
         if not db_url:
-            print("FEHLER: DATABASE_URL ist auf dem Server nicht gesetzt.")
             return jsonify({"error": "Datenbank-Konfiguration auf dem Server fehlt."}), 500
             
-        print("LOG: Verbinde mit der Datenbank...")
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
-
-        # Sicherstellen, dass die Tabelle existiert (robuster Ansatz)
         ensure_db_table_exists(cur)
         
         insert_query = """
@@ -132,11 +121,8 @@ def upload_spielbericht():
             json.dumps(parsed_data['spielverlauf'])
         )
         
-        print(f"LOG: Führe INSERT für Spiel-ID {parsed_data['spielId']} aus...")
         cur.execute(insert_query, data_tuple)
-        
         conn.commit()
-        print("LOG: Datenbank-Commit erfolgreich!")
         
         return jsonify({
             "success": True, 
@@ -144,15 +130,68 @@ def upload_spielbericht():
         }), 200
         
     except Exception as e:
-        print(f"FEHLER bei Datenbank-Operation: {e}")
         return jsonify({"error": f"Datenbank-Fehler: {str(e)}"}), 500
     finally:
-        # Sicherstellen, dass die Verbindung immer geschlossen wird
         if conn:
             cur.close()
             conn.close()
-            print("LOG: Datenbank-Verbindung geschlossen.")
+
+# NEUE FUNKTION: Daten aus der Datenbank anzeigen
+@app.route('/view-data')
+def view_data():
+    conn = None
+    try:
+        db_url = os.environ.get('DATABASE_URL')
+        if not db_url:
+            return "<h1>Fehler</h1><p>Datenbank-Konfiguration fehlt.</p>", 500
+            
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Sicherstellen, dass die Tabelle existiert, bevor wir sie abfragen
+        ensure_db_table_exists(cur)
+        
+        # Daten aus der Datenbank abfragen, neueste zuerst
+        cur.execute("SELECT spiel_id, datum, ergebnis, teams FROM spielberichte ORDER BY erstellt_am DESC;")
+        berichte = cur.fetchall()
+        
+        # Eine einfache HTML-Seite als Antwort erstellen
+        html = """
+        <style>
+            body { font-family: sans-serif; margin: 2em; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        </style>
+        <h1>Gespeicherte Spielberichte</h1>
+        """
+        
+        if not berichte:
+            html += "<p>Noch keine Daten in der Datenbank gefunden.</p>"
+            return html, 200
+
+        html += "<table><tr><th>Spiel ID</th><th>Datum</th><th>Ergebnis</th><th>Heim</th><th>Gast</th></tr>"
+        
+        for bericht in berichte:
+            spiel_id, datum_val, ergebnis_json, teams_json = bericht
+            
+            datum_str = datum_val.strftime('%d.%m.%Y') if isinstance(datum_val, date) else 'N/A'
+            ergebnis_str = ergebnis_json.get('endstand', 'N/A') if ergebnis_json else 'N/A'
+            heim_str = teams_json.get('heim', 'N/A') if teams_json else 'N/A'
+            gast_str = teams_json.get('gast', 'N/A') if teams_json else 'N/A'
+            
+            html += f"<tr><td>{spiel_id}</td><td>{datum_str}</td><td>{ergebnis_str}</td><td>{heim_str}</td><td>{gast_str}</td></tr>"
+            
+        html += "</table>"
+        
+        return html, 200
+
+    except Exception as e:
+        return f"<h1>Ein Fehler ist aufgetreten</h1><p>{e}</p>", 500
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
 
 if __name__ == '__main__':
-    # Wir brauchen den init_db() Aufruf hier nicht mehr
     app.run(port=5001)
