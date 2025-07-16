@@ -13,12 +13,27 @@ from pypdf import PdfReader
 app = Flask(__name__)
 CORS(app)
 
-# Die parse_spielbericht Funktion bleibt unverändert
+# ==============================================================================
+# === VERBESSERTE DATEN-INTERPRETATION IN DIESER FUNKTION ===
+# ==============================================================================
 def parse_spielbericht(pdf_bytes):
+    """
+    Analysiert den Inhalt einer PDF-Datei und extrahiert strukturierte Spieldaten.
+    Diese Version ist robuster gegenüber Formatierungsfehlern in der PDF.
+    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     full_text = ""
     for page in reader.pages:
         full_text += page.extract_text() + "\n"
+
+    # --- BESSERE DATEN-INTERPRETATION ---
+    # Zuerst bereinigen wir den Kopfbereich des Textes, um die allgemeinen Spieldaten
+    # zuverlässiger zu finden. Wir ersetzen mehrere Leerzeichen, Kommas und Zeilenumbrüche
+    # durch ein einziges Leerzeichen.
+    # Wir nehmen nur den Text bis zu den Mannschaftslisten, um den Spielverlauf nicht zu beschädigen.
+    header_text_end = full_text.find("Mannschaftslisten")
+    header_text = full_text[:header_text_end] if header_text_end != -1 else full_text
+    clean_header_text = re.sub(r'[\s,"]+', ' ', header_text)
 
     data = {
         "spielId": None,
@@ -29,25 +44,30 @@ def parse_spielbericht(pdf_bytes):
         "spielverlauf": []
     }
 
-    match = re.search(r"Spiel Nr\. (\d+)", full_text)
+    # --- VERBESSERTE REGEX-MUSTER ---
+    # Wir suchen jetzt auf dem bereinigten Text.
+    match = re.search(r"Spiel Nr (\d+)", clean_header_text)
     if match:
         data["spielId"] = match.group(1)
     
-    match = re.search(r"am (\d{2}\.\d{2}\.\d{2})", full_text)
+    match = re.search(r"am (\d{2}\.\d{2}\.\d{2})", clean_header_text)
     if match:
         data["datum"] = match.group(1)
 
-    match = re.search(r"Heim Gast\s*\n\s*(.*?) - (.*?)\n", full_text)
+    # Sucht nach "Heim Gast", dann den Heim- und Gastnamen bis zum Wort "Endstand".
+    match = re.search(r"Heim Gast (.*?) - (.*?) Endstand", clean_header_text)
     if match:
         data["teams"]["heim"] = match.group(1).strip()
         data["teams"]["gast"] = match.group(2).strip()
 
-    match = re.search(r"Endstand\s*\n\s*(\d+:\d+) \((\d+:\d+)\), Sieger (.*?)\n", full_text)
+    # Sucht nach "Endstand", den Ergebnissen und dem Sieger bis zum Wort "Zuschauer".
+    match = re.search(r"Endstand (\d+:\d+) \((\d+:\d+)\) Sieger (.*?)(Zuschauer|Handball4all)", clean_header_text)
     if match:
-        data["ergebnis"]["endstand"] = match.group(1)
-        data["ergebnis"]["halbzeit"] = match.group(2)
+        data["ergebnis"]["endstand"] = match.group(1).strip()
+        data["ergebnis"]["halbzeit"] = match.group(2).strip()
         data["ergebnis"]["sieger"] = match.group(3).strip()
 
+    # --- SPIELVERLAUF-PARSING (bleibt gleich, nutzt den Originaltext) ---
     verlauf_start = full_text.find("Spielverlauf\n")
     if verlauf_start != -1:
         verlauf_text = full_text[verlauf_start:]
@@ -59,7 +79,11 @@ def parse_spielbericht(pdf_bytes):
                 "spielstand": ereignis[2] if ereignis[2] else None,
                 "aktion": ereignis[3].strip()
             })
+            
     return data
+# ==============================================================================
+# === AB HIER BLEIBT DER CODE UNVERÄNDERT ===
+# ==============================================================================
 
 def ensure_db_table_exists(cur):
     """Stellt sicher, dass die Zieltabelle in der DB existiert."""
@@ -136,7 +160,6 @@ def upload_spielbericht():
             cur.close()
             conn.close()
 
-# NEUE FUNKTION: Daten aus der Datenbank anzeigen
 @app.route('/view-data')
 def view_data():
     conn = None
@@ -148,14 +171,11 @@ def view_data():
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
         
-        # Sicherstellen, dass die Tabelle existiert, bevor wir sie abfragen
         ensure_db_table_exists(cur)
         
-        # Daten aus der Datenbank abfragen, neueste zuerst
         cur.execute("SELECT spiel_id, datum, ergebnis, teams FROM spielberichte ORDER BY erstellt_am DESC;")
         berichte = cur.fetchall()
         
-        # Eine einfache HTML-Seite als Antwort erstellen
         html = """
         <style>
             body { font-family: sans-serif; margin: 2em; }
