@@ -18,7 +18,7 @@ CORS(app)
 LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === ANALYSE-FUNKTION: Gibt jetzt die analysierten Daten UND die Rohdaten zurück ===
+# === ANALYSE-FUNKTION: Jetzt mit deiner neuen Logik für die Teamnamen ===
 # ==============================================================================
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -35,21 +35,31 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         "spielklasse": "Unbekannt", "spielverlauf": []
     }
 
+    # Wir gehen jede Zeile durch und suchen nach unseren Schlüsselwörtern
     for line in lines:
         clean_line = line.strip()
         try:
+            # --- Spielklasse, ID, Datum (bleibt wie gehabt) ---
             if 'Spiel Nr.' in clean_line and ' am ' in clean_line:
                 data["spielklasse"] = clean_line.split(',')[0].strip()
                 match_id = re.search(r"Spiel Nr\.\s*([\d\s]+?)\s*am", clean_line)
                 if match_id: data["spielId"] = match_id.group(1).strip()
                 match_datum = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_line)
                 if match_datum: data["datum"] = match_datum.group(1).strip()
-            elif clean_line.startswith('"Heim Gast'):
-                teams_part = clean_line.split('","')[1]
-                teams = teams_part.split(' - ')
-                if len(teams) == 2:
-                    data["teams"]["heim"] = teams[0].strip()
-                    data["teams"]["gast"] = teams[1].strip()
+            
+            # === NEUE LOGIK FÜR TEAMNAMEN ===
+            # Wenn die Zeile mit "Heim:" beginnt...
+            elif clean_line.startswith('Heim:'):
+                # ...ist der Name alles nach dem ersten Doppelpunkt.
+                data["teams"]["heim"] = clean_line.split(':', 1)[1].strip()
+            
+            # Wenn die Zeile mit "Gast:" beginnt...
+            elif clean_line.startswith('Gast:'):
+                # ...ist der Name alles nach dem ersten Doppelpunkt.
+                data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
+            # === ENDE DER NEUEN LOGIK ===
+
+            # --- Ergebnis (bleibt wie gehabt) ---
             elif clean_line.startswith('"Endstand'):
                 ergebnis_part = clean_line.split('","')[1]
                 match_ergebnis = re.search(r'(\d+:\d+)\s*\((\d+:\d+)\)', ergebnis_part)
@@ -58,9 +68,11 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
                     data["ergebnis"]["halbzeit"] = match_ergebnis.group(2)
                 match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
                 if match_sieger: data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
-        except Exception:
+        except Exception as e:
+            print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
             continue
 
+    # Spielverlauf-Extraktion (bleibt wie gehabt)
     verlauf_start = full_text.find("Spielverlauf\n")
     if verlauf_start != -1:
         verlauf_text = full_text[verlauf_start:]
@@ -74,12 +86,12 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     return data, lines
 
 # ==============================================================================
-# === ROUTEN FÜR DEN NORMALEN WORKFLOW (ANALYSE & SPEICHERN) ===
+# === AB HIER BLEIBT DER CODE UNVERÄNDERT ===
 # ==============================================================================
 
 @app.route('/upload', methods=['POST'])
 def analyze_pdf_for_verification():
-    global LAST_UPLOADED_DEBUG_HTML # Wir wollen die globale Variable ändern
+    global LAST_UPLOADED_DEBUG_HTML
 
     if 'file' not in request.files: return jsonify({"error": "Keine Datei gefunden"}), 400
     pdf_file = request.files['file']
@@ -87,7 +99,6 @@ def analyze_pdf_for_verification():
         pdf_bytes = pdf_file.read()
         parsed_data, raw_lines = parse_spielbericht_and_get_raw_lines(pdf_bytes)
 
-        # === NEU: Erstelle und speichere die Debug-Ansicht ===
         debug_html = """
         <style>
             body { font-family: monospace, sans-serif; margin: 2em; line-height: 1.6; }
@@ -104,7 +115,6 @@ def analyze_pdf_for_verification():
             debug_html += f"<li><pre>{escaped_line}</pre></li>"
         debug_html += "</ol>"
         LAST_UPLOADED_DEBUG_HTML = debug_html
-        # === Ende des neuen Teils ===
 
         if parsed_data is None or not parsed_data.get("spielId"): 
             return jsonify({"error": "Analyse fehlgeschlagen. Überprüfe die PDF-Struktur."}), 400
@@ -112,13 +122,10 @@ def analyze_pdf_for_verification():
         return jsonify({"success": True, "data": parsed_data})
     except Exception as e: return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
-# === NEU: Die Debug-Seite zeigt jetzt nur noch die gespeicherten Rohdaten an ===
 @app.route('/debug')
 def debug_pdf_page():
     return LAST_UPLOADED_DEBUG_HTML
 
-# Der Rest der Datei (/save-data, /view-data etc.) bleibt unverändert.
-# ... (Restlicher Code von der vorherigen Version)
 @app.route('/save-data', methods=['POST'])
 def save_verified_data():
     verified_data = request.get_json()
