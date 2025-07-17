@@ -14,13 +14,31 @@ from pypdf import PdfReader
 app = Flask(__name__)
 CORS(app)
 
-# Globale Variablen, um die Debug-Ansichten zu speichern
+# Globale Variablen für die Debug-Ansichten
 LAST_UPLOADED_SUMMARY_HTML = "<h1>Analyse-Ergebnis</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 LAST_UPLOADED_RAW_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === ANALYSE-FUNKTION: Unverändert, gibt die extrahierten Daten zurück ===
+# === ANALYSE-FUNKTION: Jetzt mit der Logik für die Spielerlisten ===
 # ==============================================================================
+def parse_player_line(line):
+    """Versucht, eine einzelne Zeile als Spielerdaten zu interpretieren."""
+    # Ein Spieler-Zeile beginnt typischerweise mit einer Nummer in Anführungszeichen, z.B. "2 "
+    if not (line.strip().startswith('"') and line.strip()[1].isdigit()):
+        return None
+
+    try:
+        # Wir teilen die Zeile am Trennzeichen "," auf, um die Teile zu bekommen
+        parts = line.split('","')
+        nummer = parts[0].strip(' "')
+        name = parts[1].strip()
+        
+        # Für den Anfang nehmen wir nur Nummer und Name
+        return {"nummer": nummer, "name": name}
+    except IndexError:
+        # Wenn die Zeile nicht das erwartete Format hat, ist es kein Spieler
+        return None
+
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     full_text = ""
@@ -33,11 +51,42 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         "spielId": None, "datum": None,
         "teams": {"heim": "Unbekannt", "gast": "Unbekannt"},
         "ergebnis": {"endstand": "0:0", "halbzeit": "0:0", "sieger": "Unbekannt"},
-        "spielklasse": "Unbekannt", "spielverlauf": []
+        "spielklasse": "Unbekannt", 
+        "spieler": {"heim": [], "gast": []}, # Initialisiere die Spielerlisten
+        "spielverlauf": []
     }
 
-    for i, line in enumerate(lines):
+    # Zustandsvariablen für die Analyse
+    current_team_context = None # Kann 'heim' oder 'gast' sein
+    is_parsing_players = False  # Wird true, nachdem wir "Strafe" gefunden haben
+
+    for line in lines:
         clean_line = line.strip()
+        
+        # Kontext für Heim/Gast/Spielverlauf setzen
+        if clean_line.startswith('Heim:'):
+            current_team_context = 'heim'
+            is_parsing_players = False # Setze zurück, bis "Strafe" gefunden wird
+        elif clean_line.startswith('Gast:'):
+            current_team_context = 'gast'
+            is_parsing_players = False
+        elif clean_line.startswith('Spielverlauf'):
+            current_team_context = None # Spielerlisten sind vorbei
+            is_parsing_players = False
+
+        # Wenn wir im Kontext eines Teams sind und "Strafe" finden, fangen wir an, Spieler zu suchen
+        if current_team_context and "Strafe" in clean_line:
+            is_parsing_players = True
+            continue # Wir überspringen die "Strafe"-Zeile selbst
+
+        # Wenn wir im Spieler-Analyse-Modus sind...
+        if is_parsing_players:
+            player_data = parse_player_line(clean_line)
+            if player_data:
+                # ...fügen wir den gefundenen Spieler zum richtigen Team hinzu.
+                data["spieler"][current_team_context].append(player_data)
+
+        # Allgemeine Daten wie gehabt extrahieren
         try:
             if 'Spiel Nr.' in clean_line and ' am ' in clean_line:
                 data["spielklasse"] = clean_line.split(',')[0].strip()
@@ -46,11 +95,6 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
                 match_datum = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_line)
                 if match_datum: data["datum"] = match_datum.group(1).strip()
             
-            elif 'Heim:' in clean_line:
-                data["teams"]["heim"] = clean_line.split(':', 1)[1].strip()
-            elif 'Gast:' in clean_line:
-                data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
-
             elif "Endstand" in clean_line:
                 ergebnis_part = clean_line
                 match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
@@ -66,21 +110,11 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         except Exception as e:
             print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
             continue
-
-    verlauf_start = full_text.find("Spielverlauf\n")
-    if verlauf_start != -1:
-        verlauf_text = full_text[verlauf_start:]
-        ereignisse = re.findall(r"(\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2})\s+([\d:]*)\s+(.*)", verlauf_text)
-        for ereignis in ereignisse:
-            data["spielverlauf"].append({
-                "uhrzeit": ereignis[0], "spielzeit": ereignis[1],
-                "spielstand": ereignis[2] if ereignis[2] else None, "aktion": ereignis[3].strip()
-            })
             
     return data, lines
 
 # ==============================================================================
-# === ROUTEN: /upload erstellt jetzt ZWEI Debug-Ansichten ===
+# === ROUTEN: /upload wird angepasst, um die Spielerdaten anzuzeigen ===
 # ==============================================================================
 
 @app.route('/upload', methods=['POST'])
@@ -93,36 +127,53 @@ def analyze_pdf_for_verification():
         pdf_bytes = pdf_file.read()
         parsed_data, raw_lines = parse_spielbericht_and_get_raw_lines(pdf_bytes)
 
-        # === NEU: Erstelle die Zusammenfassungs-Liste ===
+        # === Erstelle die Zusammenfassungs-Liste (jetzt mit Spielern) ===
+        heim_spieler_html = "".join([f"<li>{p['nummer']} - {html.escape(p['name'])}</li>" for p in parsed_data['spieler']['heim']])
+        gast_spieler_html = "".join([f"<li>{p['nummer']} - {html.escape(p['name'])}</li>" for p in parsed_data['spieler']['gast']])
+
         summary_html = f"""
         <style>
             body {{ font-family: sans-serif; margin: 2em; }}
+            .container {{ display: flex; gap: 2em; }}
+            .column {{ flex: 1; }}
             h2 {{ border-bottom: 2px solid #eee; padding-bottom: 10px; }}
             ul {{ list-style-type: none; padding: 0; }}
             li {{ background-color: #f9f9f9; padding: 8px 12px; border-bottom: 1px solid #eee; }}
             li b {{ color: #333; }}
         </style>
-        <h2>Gefundene Werte (Zusammenfassung)</h2>
-        <ul>
-            <li><b>Spielklasse:</b> {html.escape(str(parsed_data.get('spielklasse')))}</li>
-            <li><b>Spiel ID:</b> {html.escape(str(parsed_data.get('spielId')))}</li>
-            <li><b>Datum:</b> {html.escape(str(parsed_data.get('datum')))}</li>
-            <li><b>Heim:</b> {html.escape(str(parsed_data.get('teams', {}).get('heim')))}</li>
-            <li><b>Gast:</b> {html.escape(str(parsed_data.get('teams', {}).get('gast')))}</li>
-            <li><b>Endstand:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('endstand')))}</li>
-            <li><b>Halbzeit:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('halbzeit')))}</li>
-            <li><b>Sieger:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('sieger')))}</li>
-        </ul>
+        <div class="container">
+            <div class="column">
+                <h2>Gefundene Werte</h2>
+                <ul>
+                    <li><b>Spielklasse:</b> {html.escape(str(parsed_data.get('spielklasse')))}</li>
+                    <li><b>Spiel ID:</b> {html.escape(str(parsed_data.get('spielId')))}</li>
+                    <li><b>Datum:</b> {html.escape(str(parsed_data.get('datum')))}</li>
+                    <li><b>Heim:</b> {html.escape(str(parsed_data.get('teams', {{}}).get('heim')))}</li>
+                    <li><b>Gast:</b> {html.escape(str(parsed_data.get('teams', {{}}).get('gast')))}</li>
+                    <li><b>Endstand:</b> {html.escape(str(parsed_data.get('ergebnis', {{}}).get('endstand')))}</li>
+                    <li><b>Halbzeit:</b> {html.escape(str(parsed_data.get('ergebnis', {{}}).get('halbzeit')))}</li>
+                    <li><b>Sieger:</b> {html.escape(str(parsed_data.get('ergebnis', {{}}).get('sieger')))}</li>
+                </ul>
+            </div>
+            <div class="column">
+                <h2>Heim-Spieler</h2>
+                <ul>{heim_spieler_html}</ul>
+            </div>
+            <div class="column">
+                <h2>Gast-Spieler</h2>
+                <ul>{gast_spieler_html}</ul>
+            </div>
+        </div>
         """
         LAST_UPLOADED_SUMMARY_HTML = summary_html
         
         # Erstelle die Rohdaten-Ansicht
         raw_html = """
         <style>
-            h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 40px; }
-            ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; font-family: monospace; }
-            li { margin-bottom: 5px; }
-            pre { margin: 0; display: inline; }
+            h2 {{ border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 40px; }}
+            ol {{ border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; font-family: monospace; }}
+            li {{ margin-bottom: 5px; }}
+            pre {{ margin: 0; display: inline; }}
         </style>
         <h2>Zeilenweise Rohdaten der Analyse</h2>
         <ol>
@@ -139,14 +190,12 @@ def analyze_pdf_for_verification():
         return jsonify({"success": True, "data": parsed_data})
     except Exception as e: return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
-# === NEU: Die Debug-Seite kombiniert jetzt beide Ansichten ===
+# Der Rest der Datei (/debug, /save-data, etc.) bleibt unverändert.
+# ... (Hier den restlichen Code von der vorherigen Version einfügen)
 @app.route('/debug')
 def debug_pdf_page():
-    # Wir fügen einfach beide HTML-Teile zusammen
     return LAST_UPLOADED_SUMMARY_HTML + LAST_UPLOADED_RAW_HTML
 
-# Der Rest der Datei (/save-data, /view-data etc.) bleibt unverändert.
-# ... (Hier den restlichen Code von der vorherigen Version einfügen)
 @app.route('/save-data', methods=['POST'])
 def save_verified_data():
     verified_data = request.get_json()
