@@ -5,7 +5,7 @@ import io
 import os
 import json
 import psycopg2
-import html # For escaping text in debug view
+import html
 from datetime import date
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -18,7 +18,7 @@ CORS(app)
 LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === ANALYSE-FUNKTION: Jetzt mit deiner neuen Logik für den Endstand ===
+# === FINALE ANALYSE-FUNKTION: Folgt der Logik "Schlüsselwort in einer Zeile, Wert in der nächsten" ===
 # ==============================================================================
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -35,11 +35,12 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         "spielklasse": "Unbekannt", "spielverlauf": []
     }
 
-    # Wir gehen jede Zeile durch und suchen nach unseren Schlüsselwörtern
-    for line in lines:
+    # Wir gehen die Zeilen mit einem Index durch, um auf die nächste Zeile zugreifen zu können
+    for i, line in enumerate(lines):
         clean_line = line.strip()
+        
         try:
-            # --- Spielklasse, ID, Datum (bleibt wie gehabt) ---
+            # --- Spielklasse, ID, Datum ---
             if 'Spiel Nr.' in clean_line and ' am ' in clean_line:
                 data["spielklasse"] = clean_line.split(',')[0].strip()
                 match_id = re.search(r"Spiel Nr\.\s*([\d\s]+?)\s*am", clean_line)
@@ -47,33 +48,32 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
                 match_datum = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_line)
                 if match_datum: data["datum"] = match_datum.group(1).strip()
             
-            # --- Teamnamen (bleibt wie gehabt) ---
-            elif clean_line.startswith('Heim:'):
+            # --- Teamnamen ---
+            elif 'Heim:' in clean_line:
                 data["teams"]["heim"] = clean_line.split(':', 1)[1].strip()
-            elif clean_line.startswith('Gast:'):
+            elif 'Gast:' in clean_line:
                 data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
 
-            # === NEUE LOGIK FÜR ENDSTAND ===
-            # Wenn die Zeile mit '"Endstand' beginnt...
-            elif clean_line.startswith('"Endstand'):
-                # ...extrahieren wir den Wert-Teil.
-                ergebnis_part = clean_line.split('","')[1]
-                
-                # Der Endstand ist das erste Muster im Format "Tore:Tore".
-                match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
-                if match_endstand:
-                    data["ergebnis"]["endstand"] = match_endstand.group(1)
+            # --- Ergebnis ---
+            # Wenn eine Zeile "Endstand" enthält...
+            elif "Endstand" in clean_line:
+                # ...sind die Daten in der NÄCHSTEN Zeile.
+                # Wir stellen sicher, dass es eine nächste Zeile gibt.
+                if i + 1 < len(lines):
+                    ergebnis_part = lines[i+1]
+                    
+                    # Extrahiere Endstand, Halbzeit und Sieger aus dieser nächsten Zeile
+                    match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
+                    if match_endstand:
+                        data["ergebnis"]["endstand"] = match_endstand.group(1)
 
-                # Der Halbzeitstand steht in Klammern.
-                match_halbzeit = re.search(r'\((\d+:\d+)\)', ergebnis_part)
-                if match_halbzeit:
-                    data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
+                    match_halbzeit = re.search(r'\((\d+:\d+)\)', ergebnis_part)
+                    if match_halbzeit:
+                        data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
 
-                # Der Sieger steht nach dem Wort "Sieger".
-                match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
-                if match_sieger:
-                    data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
-            # === ENDE DER NEUEN LOGIK ===
+                    match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
+                    if match_sieger:
+                        data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
 
         except Exception as e:
             print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
