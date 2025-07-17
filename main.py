@@ -14,11 +14,12 @@ from pypdf import PdfReader
 app = Flask(__name__)
 CORS(app)
 
-# Globale Variable für die Debug-Ansicht
-LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
+# Globale Variablen, um die Debug-Ansichten zu speichern
+LAST_UPLOADED_SUMMARY_HTML = "<h1>Analyse-Ergebnis</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
+LAST_UPLOADED_RAW_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === FINALE ANALYSE-FUNKTION: Jetzt mit der korrekten Logik für den Endstand ===
+# === ANALYSE-FUNKTION: Unverändert, gibt die extrahierten Daten zurück ===
 # ==============================================================================
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -35,11 +36,8 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         "spielklasse": "Unbekannt", "spielverlauf": []
     }
 
-    debug_tags = {}
-
     for i, line in enumerate(lines):
         clean_line = line.strip()
-        
         try:
             if 'Spiel Nr.' in clean_line and ' am ' in clean_line:
                 data["spielklasse"] = clean_line.split(',')[0].strip()
@@ -53,36 +51,22 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
             elif 'Gast:' in clean_line:
                 data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
 
-            # === KORRIGIERTE LOGIK FÜR ENDSTAND ===
-            # Wenn "Endstand" in der Zeile ist...
             elif "Endstand" in clean_line:
-                # ...ist der Wert in derselben Zeile.
                 ergebnis_part = clean_line
-                debug_tags[i] = "Schlüsselwort 'Endstand' und Wert gefunden"
-                
-                # Extrahiere Endstand, Halbzeit und Sieger aus dieser Zeile
                 match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
-                if match_endstand:
-                    data["ergebnis"]["endstand"] = match_endstand.group(1)
-
+                if match_endstand: data["ergebnis"]["endstand"] = match_endstand.group(1)
                 match_halbzeit = re.search(r'\((\d+:\d+)\)', ergebnis_part)
-                if match_halbzeit:
-                    data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
-
+                if match_halbzeit: data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
                 match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
                 if match_sieger:
-                    # Wir nehmen alles nach "Sieger" und entfernen den Rest
                     sieger_text = match_sieger.group(1)
                     end_of_sieger = sieger_text.find("Zuschauer:")
-                    if end_of_sieger != -1:
-                        sieger_text = sieger_text[:end_of_sieger]
+                    if end_of_sieger != -1: sieger_text = sieger_text[:end_of_sieger]
                     data["ergebnis"]["sieger"] = sieger_text.strip()
-
         except Exception as e:
             print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
             continue
 
-    # Spielverlauf-Extraktion
     verlauf_start = full_text.find("Spielverlauf\n")
     if verlauf_start != -1:
         verlauf_text = full_text[verlauf_start:]
@@ -93,46 +77,76 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
                 "spielstand": ereignis[2] if ereignis[2] else None, "aktion": ereignis[3].strip()
             })
             
-    return data, lines, debug_tags
+    return data, lines
 
 # ==============================================================================
-# === AB HIER BLEIBT DER CODE UNVERÄNDERT ===
+# === ROUTEN: /upload erstellt jetzt ZWEI Debug-Ansichten ===
 # ==============================================================================
 
 @app.route('/upload', methods=['POST'])
 def analyze_pdf_for_verification():
-    global LAST_UPLOADED_DEBUG_HTML
+    global LAST_UPLOADED_SUMMARY_HTML, LAST_UPLOADED_RAW_HTML
+
     if 'file' not in request.files: return jsonify({"error": "Keine Datei gefunden"}), 400
     pdf_file = request.files['file']
     try:
         pdf_bytes = pdf_file.read()
-        parsed_data, raw_lines, debug_tags = parse_spielbericht_and_get_raw_lines(pdf_bytes)
-        debug_html = """
+        parsed_data, raw_lines = parse_spielbericht_and_get_raw_lines(pdf_bytes)
+
+        # === NEU: Erstelle die Zusammenfassungs-Liste ===
+        summary_html = f"""
         <style>
-            body { font-family: monospace, sans-serif; margin: 2em; line-height: 1.6; }
-            h1 { font-family: sans-serif; } ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; }
-            li { margin-bottom: 5px; } pre { margin: 0; display: inline; }
-            .highlight { background-color: #d4edda; color: #155724; padding: 2px 4px; border-radius: 3px; }
+            body {{ font-family: sans-serif; margin: 2em; }}
+            h2 {{ border-bottom: 2px solid #eee; padding-bottom: 10px; }}
+            ul {{ list-style-type: none; padding: 0; }}
+            li {{ background-color: #f9f9f9; padding: 8px 12px; border-bottom: 1px solid #eee; }}
+            li b {{ color: #333; }}
         </style>
-        <h1>Zeilenweise Rohdaten mit Analyse-Markierung</h1><ol>
+        <h2>Gefundene Werte (Zusammenfassung)</h2>
+        <ul>
+            <li><b>Spielklasse:</b> {html.escape(str(parsed_data.get('spielklasse')))}</li>
+            <li><b>Spiel ID:</b> {html.escape(str(parsed_data.get('spielId')))}</li>
+            <li><b>Datum:</b> {html.escape(str(parsed_data.get('datum')))}</li>
+            <li><b>Heim:</b> {html.escape(str(parsed_data.get('teams', {}).get('heim')))}</li>
+            <li><b>Gast:</b> {html.escape(str(parsed_data.get('teams', {}).get('gast')))}</li>
+            <li><b>Endstand:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('endstand')))}</li>
+            <li><b>Halbzeit:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('halbzeit')))}</li>
+            <li><b>Sieger:</b> {html.escape(str(parsed_data.get('ergebnis', {}).get('sieger')))}</li>
+        </ul>
         """
-        for i, line in enumerate(raw_lines):
+        LAST_UPLOADED_SUMMARY_HTML = summary_html
+        
+        # Erstelle die Rohdaten-Ansicht
+        raw_html = """
+        <style>
+            h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 40px; }
+            ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; font-family: monospace; }
+            li { margin-bottom: 5px; }
+            pre { margin: 0; display: inline; }
+        </style>
+        <h2>Zeilenweise Rohdaten der Analyse</h2>
+        <ol>
+        """
+        for line in raw_lines:
             escaped_line = html.escape(line)
-            tag_html = ""
-            if i in debug_tags:
-                tag_html = f' <span class="highlight"> &lt;-- {debug_tags[i]}</span>'
-            debug_html += f"<li><pre>{escaped_line}</pre>{tag_html}</li>"
-        debug_html += "</ol>"
-        LAST_UPLOADED_DEBUG_HTML = debug_html
+            raw_html += f"<li><pre>{escaped_line}</pre></li>"
+        raw_html += "</ol>"
+        LAST_UPLOADED_RAW_HTML = raw_html
+
         if parsed_data is None or not parsed_data.get("spielId"): 
             return jsonify({"error": "Analyse fehlgeschlagen. Überprüfe die PDF-Struktur."}), 400
+        
         return jsonify({"success": True, "data": parsed_data})
     except Exception as e: return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
+# === NEU: Die Debug-Seite kombiniert jetzt beide Ansichten ===
 @app.route('/debug')
 def debug_pdf_page():
-    return LAST_UPLOADED_DEBUG_HTML
+    # Wir fügen einfach beide HTML-Teile zusammen
+    return LAST_UPLOADED_SUMMARY_HTML + LAST_UPLOADED_RAW_HTML
 
+# Der Rest der Datei (/save-data, /view-data etc.) bleibt unverändert.
+# ... (Hier den restlichen Code von der vorherigen Version einfügen)
 @app.route('/save-data', methods=['POST'])
 def save_verified_data():
     verified_data = request.get_json()
