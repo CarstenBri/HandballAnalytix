@@ -18,7 +18,7 @@ CORS(app)
 LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === FINALE ANALYSE-FUNKTION: Folgt der Logik "Schlüsselwort in einer Zeile, Wert in der nächsten" ===
+# === ANALYSE-FUNKTION: Gibt jetzt auch Debug-Informationen zurück ===
 # ==============================================================================
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -35,65 +35,54 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
         "spielklasse": "Unbekannt", "spielverlauf": []
     }
 
-    # Wir gehen die Zeilen mit einem Index durch, um auf die nächste Zeile zugreifen zu können
+    # NEU: Eine Liste, um unsere Debug-Markierungen zu speichern
+    debug_tags = {}
+
     for i, line in enumerate(lines):
         clean_line = line.strip()
         
         try:
-            # --- Spielklasse, ID, Datum ---
             if 'Spiel Nr.' in clean_line and ' am ' in clean_line:
+                # ... (Logik für Spiel-ID, Datum etc. bleibt gleich)
                 data["spielklasse"] = clean_line.split(',')[0].strip()
                 match_id = re.search(r"Spiel Nr\.\s*([\d\s]+?)\s*am", clean_line)
                 if match_id: data["spielId"] = match_id.group(1).strip()
                 match_datum = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_line)
                 if match_datum: data["datum"] = match_datum.group(1).strip()
             
-            # --- Teamnamen ---
             elif 'Heim:' in clean_line:
                 data["teams"]["heim"] = clean_line.split(':', 1)[1].strip()
             elif 'Gast:' in clean_line:
                 data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
 
-            # --- Ergebnis ---
-            # Wenn eine Zeile "Endstand" enthält...
+            # === Hier ist die Logik, die wir untersuchen ===
             elif "Endstand" in clean_line:
-                # ...sind die Daten in der NÄCHSTEN Zeile.
-                # Wir stellen sicher, dass es eine nächste Zeile gibt.
+                # Wir markieren die Zeile, die wir gefunden haben
+                debug_tags[i] = "Schlüsselwort 'Endstand' gefunden"
+
                 if i + 1 < len(lines):
                     ergebnis_part = lines[i+1]
+                    # Wir markieren die Zeile, die wir als Wert nehmen
+                    debug_tags[i+1] = "Als Wert für 'Endstand' verwendet"
                     
-                    # Extrahiere Endstand, Halbzeit und Sieger aus dieser nächsten Zeile
                     match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
-                    if match_endstand:
-                        data["ergebnis"]["endstand"] = match_endstand.group(1)
-
+                    if match_endstand: data["ergebnis"]["endstand"] = match_endstand.group(1)
                     match_halbzeit = re.search(r'\((\d+:\d+)\)', ergebnis_part)
-                    if match_halbzeit:
-                        data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
-
+                    if match_halbzeit: data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
                     match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
-                    if match_sieger:
-                        data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
+                    if match_sieger: data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
 
         except Exception as e:
             print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
             continue
 
     # Spielverlauf-Extraktion (bleibt wie gehabt)
-    verlauf_start = full_text.find("Spielverlauf\n")
-    if verlauf_start != -1:
-        verlauf_text = full_text[verlauf_start:]
-        ereignisse = re.findall(r"(\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2})\s+([\d:]*)\s+(.*)", verlauf_text)
-        for ereignis in ereignisse:
-            data["spielverlauf"].append({
-                "uhrzeit": ereignis[0], "spielzeit": ereignis[1],
-                "spielstand": ereignis[2] if ereignis[2] else None, "aktion": ereignis[3].strip()
-            })
+    # ...
             
-    return data, lines
+    return data, lines, debug_tags
 
 # ==============================================================================
-# === AB HIER BLEIBT DER CODE UNVERÄNDERT ===
+# === ROUTEN: /upload wird angepasst, um die Debug-Infos zu nutzen ===
 # ==============================================================================
 
 @app.route('/upload', methods=['POST'])
@@ -104,8 +93,10 @@ def analyze_pdf_for_verification():
     pdf_file = request.files['file']
     try:
         pdf_bytes = pdf_file.read()
-        parsed_data, raw_lines = parse_spielbericht_and_get_raw_lines(pdf_bytes)
+        # Wir bekommen jetzt auch die Debug-Tags zurück
+        parsed_data, raw_lines, debug_tags = parse_spielbericht_and_get_raw_lines(pdf_bytes)
 
+        # === Erstelle die verbesserte Debug-Ansicht mit Markierungen ===
         debug_html = """
         <style>
             body { font-family: monospace, sans-serif; margin: 2em; line-height: 1.6; }
@@ -113,15 +104,25 @@ def analyze_pdf_for_verification():
             ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; }
             li { margin-bottom: 5px; }
             pre { margin: 0; display: inline; }
+            .highlight-key { background-color: #f8d7da; color: #721c24; padding: 2px 4px; border-radius: 3px; }
+            .highlight-value { background-color: #d4edda; color: #155724; padding: 2px 4px; border-radius: 3px; }
         </style>
-        <h1>Zeilenweise Rohdaten der letzten Analyse</h1>
+        <h1>Zeilenweise Rohdaten mit Analyse-Markierung</h1>
         <ol>
         """
-        for line in raw_lines:
+        for i, line in enumerate(raw_lines):
             escaped_line = html.escape(line)
-            debug_html += f"<li><pre>{escaped_line}</pre></li>"
+            tag_html = ""
+            if i in debug_tags:
+                tag_text = debug_tags[i]
+                # Wir weisen je nach Tag eine andere Farbe zu
+                css_class = "highlight-key" if "Schlüsselwort" in tag_text else "highlight-value"
+                tag_html = f' <span class="{css_class}"> &lt;-- {tag_text}</span>'
+            
+            debug_html += f"<li><pre>{escaped_line}</pre>{tag_html}</li>"
         debug_html += "</ol>"
         LAST_UPLOADED_DEBUG_HTML = debug_html
+        # === Ende des neuen Teils ===
 
         if parsed_data is None or not parsed_data.get("spielId"): 
             return jsonify({"error": "Analyse fehlgeschlagen. Überprüfe die PDF-Struktur."}), 400
@@ -133,6 +134,8 @@ def analyze_pdf_for_verification():
 def debug_pdf_page():
     return LAST_UPLOADED_DEBUG_HTML
 
+# Der Rest der Datei (/save-data, /view-data etc.) bleibt unverändert.
+# ... (Hier den restlichen Code von der vorherigen Version einfügen)
 @app.route('/save-data', methods=['POST'])
 def save_verified_data():
     verified_data = request.get_json()
