@@ -18,7 +18,7 @@ CORS(app)
 LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
 
 # ==============================================================================
-# === ANALYSE-FUNKTION: Jetzt mit deiner neuen Logik für die Teamnamen ===
+# === ANALYSE-FUNKTION: Jetzt mit deiner neuen Logik für den Endstand ===
 # ==============================================================================
 def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -47,27 +47,34 @@ def parse_spielbericht_and_get_raw_lines(pdf_bytes):
                 match_datum = re.search(r"am\s*(\d{2}\.\d{2}\.\d{2})", clean_line)
                 if match_datum: data["datum"] = match_datum.group(1).strip()
             
-            # === NEUE LOGIK FÜR TEAMNAMEN ===
-            # Wenn die Zeile mit "Heim:" beginnt...
+            # --- Teamnamen (bleibt wie gehabt) ---
             elif clean_line.startswith('Heim:'):
-                # ...ist der Name alles nach dem ersten Doppelpunkt.
                 data["teams"]["heim"] = clean_line.split(':', 1)[1].strip()
-            
-            # Wenn die Zeile mit "Gast:" beginnt...
             elif clean_line.startswith('Gast:'):
-                # ...ist der Name alles nach dem ersten Doppelpunkt.
                 data["teams"]["gast"] = clean_line.split(':', 1)[1].strip()
+
+            # === NEUE LOGIK FÜR ENDSTAND ===
+            # Wenn die Zeile mit '"Endstand' beginnt...
+            elif clean_line.startswith('"Endstand'):
+                # ...extrahieren wir den Wert-Teil.
+                ergebnis_part = clean_line.split('","')[1]
+                
+                # Der Endstand ist das erste Muster im Format "Tore:Tore".
+                match_endstand = re.search(r'(\d+:\d+)', ergebnis_part)
+                if match_endstand:
+                    data["ergebnis"]["endstand"] = match_endstand.group(1)
+
+                # Der Halbzeitstand steht in Klammern.
+                match_halbzeit = re.search(r'\((\d+:\d+)\)', ergebnis_part)
+                if match_halbzeit:
+                    data["ergebnis"]["halbzeit"] = match_halbzeit.group(1)
+
+                # Der Sieger steht nach dem Wort "Sieger".
+                match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
+                if match_sieger:
+                    data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
             # === ENDE DER NEUEN LOGIK ===
 
-            # --- Ergebnis (bleibt wie gehabt) ---
-            elif clean_line.startswith('"Endstand'):
-                ergebnis_part = clean_line.split('","')[1]
-                match_ergebnis = re.search(r'(\d+:\d+)\s*\((\d+:\d+)\)', ergebnis_part)
-                if match_ergebnis:
-                    data["ergebnis"]["endstand"] = match_ergebnis.group(1)
-                    data["ergebnis"]["halbzeit"] = match_ergebnis.group(2)
-                match_sieger = re.search(r"Sieger\s*(.*)", ergebnis_part)
-                if match_sieger: data["ergebnis"]["sieger"] = match_sieger.group(1).replace('",', '').strip()
         except Exception as e:
             print(f"Kleiner Fehler bei der Analyse der Zeile '{clean_line}': {e}")
             continue
