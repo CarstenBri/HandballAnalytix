@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="de">
-    //version 1.0.1
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -40,8 +39,6 @@
         #uploadButton:hover { background-color: #0056b3; }
         button:disabled { background-color: #a0c9ff; cursor: not-allowed; }
         #status { margin-top: 20px; font-weight: bold; min-height: 22px; }
-
-        /* Stile für das Verifizierungsformular */
         #verification-container {
             margin-top: 25px;
             padding-top: 20px;
@@ -60,7 +57,7 @@
             width: 100%; padding: 8px; border: 1px solid #ccc;
             border-radius: 5px; box-sizing: border-box;
         }
-        #saveButton { background-color: #28a745; /* Grün */ }
+        #saveButton { background-color: #28a745; }
         #saveButton:hover { background-color: #218838; }
     </style>
 </head>
@@ -77,7 +74,6 @@
         
         <div id="status"></div>
 
-        <!-- Container für die Verifizierung -->
         <div id="verification-container">
             <h2>Daten überprüfen und bestätigen</h2>
             <p>Bitte überprüfe die extrahierten Daten. Du kannst sie hier korrigieren, bevor du sie speicherst.</p>
@@ -103,12 +99,12 @@
         const uploadButton = document.getElementById('uploadButton');
         const verificationContainer = document.getElementById('verification-container');
         
-        let verifiedDataCache = {}; // Cache für die Daten zwischen den Schritten
+        let verifiedDataCache = {};
 
         function updateFileName() {
             if (fileInput.files.length > 0) {
                 fileLabel.textContent = `Ausgewählt: ${fileInput.files[0].name}`;
-                verificationContainer.style.display = 'none'; // Form bei neuer Datei ausblenden
+                verificationContainer.style.display = 'none';
             } else {
                 fileLabel.textContent = 'Klicke hier, um eine PDF-Datei auszuwählen';
             }
@@ -134,7 +130,7 @@
                 const result = await response.json();
 
                 if (response.ok && result.success) {
-                    verifiedDataCache = result.data; // Daten im Cache speichern
+                    verifiedDataCache = result.data;
                     displayVerificationForm(verifiedDataCache);
                     statusDiv.textContent = 'Analyse erfolgreich. Bitte Daten überprüfen.';
                     statusDiv.style.color = 'blue';
@@ -162,9 +158,8 @@
         }
 
         async function saveVerifiedData() {
-            // Daten aus dem Formular sammeln und mit dem Cache zusammenführen
             const dataToSave = {
-                ...verifiedDataCache, // Behält z.B. den Spielverlauf
+                ...verifiedDataCache,
                 spielId: document.getElementById('ver-spielId').value,
                 datum: document.getElementById('ver-datum').value,
                 teams: {
@@ -172,7 +167,7 @@
                     gast: document.getElementById('ver-gast').value,
                 },
                 ergebnis: {
-                    ...verifiedDataCache.ergebnis, // Behält z.B. den Sieger
+                    ...verifiedDataCache.ergebnis,
                     endstand: document.getElementById('ver-endstand').value,
                     halbzeit: document.getElementById('ver-halbzeit').value,
                 }
@@ -193,7 +188,7 @@
                 if (response.ok && result.success) {
                     statusDiv.textContent = result.message;
                     statusDiv.style.color = 'green';
-                    verificationContainer.style.display = 'none'; // Form nach Erfolg ausblenden
+                    verificationContainer.style.display = 'none';
                 } else {
                     statusDiv.textContent = `Fehler beim Speichern: ${result.error || 'Unbekannter Fehler'}`;
                     statusDiv.style.color = 'red';
@@ -208,3 +203,4 @@
     </script>
 </body>
 </html>
+
