@@ -14,14 +14,13 @@ from pypdf import PdfReader
 app = Flask(__name__)
 CORS(app)
 
+# === Globale Variable, um die Rohdaten der letzten Analyse zu speichern ===
+LAST_UPLOADED_DEBUG_HTML = "<h1>Rohdaten-Ansicht</h1><p>Bitte zuerst eine PDF auf der Hauptseite analysieren.</p>"
+
 # ==============================================================================
-# === ANALYSE-FUNKTION (ROBUST) FÜR DEN NORMALEN WORKFLOW ===
+# === ANALYSE-FUNKTION: Gibt jetzt die analysierten Daten UND die Rohdaten zurück ===
 # ==============================================================================
-def parse_spielbericht(pdf_bytes):
-    """
-    Liest eine PDF und extrahiert die Daten durch eine robuste,
-    zeilenweise Suche nach Schlüsselwörtern.
-    """
+def parse_spielbericht_and_get_raw_lines(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     full_text = ""
     for page in reader.pages:
@@ -72,7 +71,7 @@ def parse_spielbericht(pdf_bytes):
                 "spielstand": ereignis[2] if ereignis[2] else None, "aktion": ereignis[3].strip()
             })
             
-    return data
+    return data, lines
 
 # ==============================================================================
 # === ROUTEN FÜR DEN NORMALEN WORKFLOW (ANALYSE & SPEICHERN) ===
@@ -80,16 +79,46 @@ def parse_spielbericht(pdf_bytes):
 
 @app.route('/upload', methods=['POST'])
 def analyze_pdf_for_verification():
+    global LAST_UPLOADED_DEBUG_HTML # Wir wollen die globale Variable ändern
+
     if 'file' not in request.files: return jsonify({"error": "Keine Datei gefunden"}), 400
     pdf_file = request.files['file']
     try:
         pdf_bytes = pdf_file.read()
-        parsed_data = parse_spielbericht(pdf_bytes)
+        parsed_data, raw_lines = parse_spielbericht_and_get_raw_lines(pdf_bytes)
+
+        # === NEU: Erstelle und speichere die Debug-Ansicht ===
+        debug_html = """
+        <style>
+            body { font-family: monospace, sans-serif; margin: 2em; line-height: 1.6; }
+            h1 { font-family: sans-serif; }
+            ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; }
+            li { margin-bottom: 5px; }
+            pre { margin: 0; display: inline; }
+        </style>
+        <h1>Zeilenweise Rohdaten der letzten Analyse</h1>
+        <ol>
+        """
+        for line in raw_lines:
+            escaped_line = html.escape(line)
+            debug_html += f"<li><pre>{escaped_line}</pre></li>"
+        debug_html += "</ol>"
+        LAST_UPLOADED_DEBUG_HTML = debug_html
+        # === Ende des neuen Teils ===
+
         if parsed_data is None or not parsed_data.get("spielId"): 
-            return jsonify({"error": "Analyse fehlgeschlagen. Die PDF-Struktur scheint unbekannt zu sein."}), 400
+            return jsonify({"error": "Analyse fehlgeschlagen. Überprüfe die PDF-Struktur."}), 400
+        
         return jsonify({"success": True, "data": parsed_data})
     except Exception as e: return jsonify({"error": f"PDF-Verarbeitung fehlgeschlagen: {str(e)}"}), 500
 
+# === NEU: Die Debug-Seite zeigt jetzt nur noch die gespeicherten Rohdaten an ===
+@app.route('/debug')
+def debug_pdf_page():
+    return LAST_UPLOADED_DEBUG_HTML
+
+# Der Rest der Datei (/save-data, /view-data etc.) bleibt unverändert.
+# ... (Restlicher Code von der vorherigen Version)
 @app.route('/save-data', methods=['POST'])
 def save_verified_data():
     verified_data = request.get_json()
@@ -130,57 +159,27 @@ def view_data():
         ensure_db_table_exists(cur)
         cur.execute("SELECT spiel_id, datum, ergebnis, teams FROM spielberichte ORDER BY erstellt_am DESC;")
         berichte = cur.fetchall()
-        html_content = "..." # Gekürzt zur Übersichtlichkeit
-        return html_content, 200
+        html = """
+        <style> body { font-family: sans-serif; margin: 2em; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #ddd; padding: 8px; text-align: left; } th { background-color: #f2f2f2; } </style>
+        <h1>Gespeicherte Spielberichte</h1>
+        """
+        if not berichte:
+            html += "<p>Noch keine Daten in der Datenbank gefunden.</p>"
+            return html, 200
+        html += "<table><tr><th>Spiel ID</th><th>Datum</th><th>Ergebnis</th><th>Halbzeit</th><th>Heim</th><th>Gast</th></tr>"
+        for bericht in berichte:
+            spiel_id, datum_val, ergebnis_json, teams_json = bericht
+            datum_str = datum_val.strftime('%d.%m.%Y') if isinstance(datum_val, date) else 'N/A'
+            ergebnis_str = ergebnis_json.get('endstand', 'N/A') if ergebnis_json else 'N/A'
+            halbzeit_str = ergebnis_json.get('halbzeit', 'N/A') if ergebnis_json else 'N/A'
+            heim_str = teams_json.get('heim', 'N/A') if teams_json else 'N/A'
+            gast_str = teams_json.get('gast', 'N/A') if teams_json else 'N/A'
+            html += f"<tr><td>{spiel_id}</td><td>{datum_str}</td><td>{ergebnis_str}</td><td>{halbzeit_str}</td><td>{heim_str}</td><td>{gast_str}</td></tr>"
+        html += "</table>"
+        return html, 200
     except Exception as e: return f"<h1>Fehler</h1><p>{e}</p>", 500
     finally:
         if conn: cur.close(); conn.close()
-
-# ==============================================================================
-# === NEUE DEBUG-SEITE FÜR ROHDATEN-ANALYSE ===
-# ==============================================================================
-@app.route('/debug', methods=['GET', 'POST'])
-def debug_pdf_page():
-    if request.method == 'POST':
-        if 'file' not in request.files: return "<h1>Fehler</h1><p>Keine Datei hochgeladen.</p>", 400
-        file = request.files['file']
-        try:
-            pdf_bytes = file.read()
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            full_text = ""
-            for page in reader.pages:
-                full_text += page.extract_text() + "\n"
-            lines = full_text.splitlines()
-            
-            html_response = """
-            <style>
-                body { font-family: monospace, sans-serif; margin: 2em; line-height: 1.6; }
-                h1, p, ul, li { font-family: sans-serif; }
-                ol { border: 1px solid #ccc; padding: 1em 1em 1em 4em; background-color: #f9f9f9; }
-                li { margin-bottom: 5px; }
-                pre { margin: 0; display: inline; }
-            </style>
-            <h1>Zeilenweise Rohdaten der PDF</h1>
-            <p>Hier kannst du die Rohdaten analysieren, um die Regeln für die Spielerdaten zu finden.</p>
-            <ol>
-            """
-            for line in lines:
-                escaped_line = html.escape(line)
-                html_response += f"<li><pre>{escaped_line}</pre></li>"
-            html_response += "</ol>"
-            return html_response
-        except Exception as e: return f"<h1>Ein Fehler ist aufgetreten</h1><p>{e}</p>"
-
-    return '''
-        <!doctype html>
-        <title>PDF Debug Uploader</title>
-        <style>body { font-family: sans-serif; margin: 2em; }</style>
-        <h1>Lade eine PDF zur Rohdaten-Analyse hoch</h1>
-        <form method=post enctype=multipart/form-data>
-          <input type=file name=file>
-          <input type=submit value=Analysieren>
-        </form>
-    '''
 
 def ensure_db_table_exists(cur):
     cur.execute("""
